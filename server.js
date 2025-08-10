@@ -1,58 +1,51 @@
-const express = require('express');
-const app = express();
-app.use(express.json({ limit: '25mb' }));
+// Accept raw PDF bytes (no JSON) from n8n "Binary File"
+app.post(
+  '/extract-binary',
+  require('express').raw({ type: ['application/pdf', 'application/octet-stream'], limit: '50mb' }),
+  async (req, res) => {
+    console.log('extract-binary: request');
+    try {
+      const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); // lazy-load
+      const { getDocument, Util } = pdfjsLib;
 
-console.log('boot: starting server...');
-setInterval(() => console.log('boot: tick'), 10000);
-
-app.get('/health', (_req, res) => res.json({ ok: true }));
-
-process.on('unhandledRejection', err => console.error('unhandledRejection:', err));
-process.on('uncaughtException',  err => console.error('uncaughtException:',  err));
-
-app.post('/extract', async (req, res) => {
-  console.log('extract: request');
-  try {
-    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); // v3 legacy CJS
-    const { getDocument, Util } = pdfjsLib;
-
-    const { url, base64 } = req.body || {};
-    if (!url && !base64) return res.status(400).json({ error: 'Provide url or base64' });
-
-    const loadingTask = getDocument(url ? { url } : { data: Buffer.from(base64, 'base64') });
-    const pdf = await loadingTask.promise;
-
-    const pages = [];
-    for (let p = 1; p <= pdf.numPages; p++) {
-      const page = await pdf.getPage(p);
-      const viewport = page.getViewport({ scale: 1 });
-      const textContent = await page.getTextContent();
-      const items = [];
-
-      for (const t of textContent.items) {
-        const m = Util.transform(viewport.transform, t.transform);
-        const x = m[4], yTop = m[5];
-        const h = Math.hypot(m[2], m[3]);
-        const w = t.width;
-        const W = viewport.width, H = viewport.height;
-
-        items.push({
-          str: t.str,
-          abs: { x, y: yTop - h, w, h },
-          pct: { x: x/W*100, y: (yTop-h)/H*100, w: w/W*100, h: h/H*100 }
-        });
+      if (!req.body || !req.body.length) {
+        return res.status(400).json({ error: 'Empty body' });
       }
 
-      pages.push({ pageNumber: p, width: viewport.width, height: viewport.height, items });
+      // Convert Buffer -> Uint8Array (what PDF.js expects)
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body);
+      const data = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+
+      const pdf = await getDocument({ data }).promise;
+
+      const pages = [];
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const viewport = page.getViewport({ scale: 1 });
+        const textContent = await page.getTextContent();
+        const items = [];
+
+        for (const t of textContent.items) {
+          const m = Util.transform(viewport.transform, t.transform);
+          const x = m[4], yTop = m[5];
+          const h = Math.hypot(m[2], m[3]);
+          const w = t.width;
+          const W = viewport.width, H = viewport.height;
+
+          items.push({
+            str: t.str,
+            abs: { x, y: yTop - h, w, h },
+            pct: { x: x/W*100, y: (yTop-h)/H*100, w: w/W*100, h: h/H*100 }
+          });
+        }
+
+        pages.push({ pageNumber: p, width: viewport.width, height: viewport.height, items });
+      }
+
+      res.json({ numPages: pdf.numPages, pages });
+    } catch (e) {
+      console.error('extract-binary error:', e);
+      res.status(500).json({ error: String(e) });
     }
-
-    console.log('extract: done pages=', pages.length);
-    res.json({ numPages: pdf.numPages, pages });
-  } catch (e) {
-    console.error('extract error:', e);
-    res.status(500).json({ error: String(e) });
   }
-});
-
-const port = process.env.PORT || 8080;
-app.listen(port, () => console.log('server: listening on :' + port));
+);
