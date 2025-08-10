@@ -1,34 +1,21 @@
 const express = require('express');
-// use built-in JSON parser (no body-parser needed)
 const app = express();
 app.use(express.json({ limit: '25mb' }));
 
-// loud logs so you always see something in CapRover
 console.log('boot: starting server...');
-
 setInterval(() => console.log('boot: tick'), 10000);
 
-// health endpoint (always available)
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// keep process alive on unexpected errors
 process.on('unhandledRejection', err => console.error('unhandledRejection:', err));
 process.on('uncaughtException',  err => console.error('uncaughtException:',  err));
 
-// lazy-load pdfjs so startup cannot fail
 app.post('/extract', async (req, res) => {
   console.log('extract: request');
   try {
-    let pdfjsLib;
-    try {
-      // Legacy CJS build works in Node
-      pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-    } catch (e) {
-      console.error('pdfjs load failed:', e);
-      return res.status(500).json({ error: 'pdfjs load failed', detail: String(e) });
-    }
-
+    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); // v3 legacy CJS
     const { getDocument, Util } = pdfjsLib;
+
     const { url, base64 } = req.body || {};
     if (!url && !base64) return res.status(400).json({ error: 'Provide url or base64' });
 
