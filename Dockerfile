@@ -3,14 +3,14 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# Install deps
-COPY package*.json ./
-RUN npm ci --omit=dev
+# Copy only package.json first for better caching
+COPY package.json ./
+RUN npm install --omit=dev
 
-# Copy server
+# Copy the server code
 COPY server.js ./server.js
 
-# (optional) run as non-root user that exists in node image
+# (optional) run as the non-root 'node' user
 USER node
 
 EXPOSE 8080
