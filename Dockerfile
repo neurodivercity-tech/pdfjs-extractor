@@ -4,31 +4,27 @@ ENV NODE_ENV=production
 ENV PORT=8080
 
 RUN node -e "require('fs').writeFileSync('package.json', JSON.stringify({name:'pdfjs-extractor',version:'1.0.0',type:'commonjs',main:'server.js'}))"
-RUN npm i --omit=dev express pdfjs-dist@3 body-parser
+RUN npm i --omit=dev express pdfjs-dist@3
 
 RUN cat > server.js <<'EOF'
 const express = require('express');
-const bodyParser = require('body-parser');
-
 const app = express();
-app.use(bodyParser.json({ limit: '25mb' }));
+app.use(express.json({ limit: '25mb' }));
 
-// Always-available health endpoint
+console.log('boot: starting server...');
+setInterval(() => console.log('boot: tick'), 10000);
+
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// Log unexpected errors instead of exiting
-process.on('unhandledRejection', err => { console.error('unhandledRejection:', err); });
-process.on('uncaughtException', err => { console.error('uncaughtException:', err); });
+process.on('unhandledRejection', e => console.error('unhandledRejection:', e));
+process.on('uncaughtException',  e => console.error('uncaughtException:',  e));
 
-// Lazy-load pdfjs only on /extract so startup can't fail
 app.post('/extract', async (req, res) => {
+  console.log('extract: request');
   try {
     let pdfjsLib;
-    try {
-      pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); // v3 legacy CJS build
-    } catch (e) {
-      return res.status(500).json({ error: 'pdfjs load failed', detail: String(e) });
-    }
+    try { pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js'); }
+    catch (e) { console.error('pdfjs load failed:', e); return res.status(500).json({ error: 'pdfjs load failed', detail: String(e) }); }
 
     const { getDocument, Util } = pdfjsLib;
     const { url, base64 } = req.body || {};
@@ -49,18 +45,14 @@ app.post('/extract', async (req, res) => {
         const x = m[4], yTop = m[5];
         const h = Math.hypot(m[2], m[3]);
         const w = t.width;
-        const pageW = viewport.width, pageH = viewport.height;
+        const W = viewport.width, H = viewport.height;
 
-        items.push({
-          str: t.str,
-          abs: { x, y: yTop - h, w, h },
-          pct: { x: x/pageW*100, y: (yTop-h)/pageH*100, w: w/pageW*100, h: h/pageH*100 }
-        });
+        items.push({ str: t.str, abs: { x, y: yTop - h, w, h }, pct: { x: x/W*100, y: (yTop-h)/H*100, w: w/W*100, h: h/H*100 } });
       }
-
       pages.push({ pageNumber: p, width: viewport.width, height: viewport.height, items });
     }
 
+    console.log('extract: done pages=', pages.length);
     res.json({ numPages: pdf.numPages, pages });
   } catch (e) {
     console.error('extract error:', e);
@@ -69,12 +61,8 @@ app.post('/extract', async (req, res) => {
 });
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => console.log('pdfjs extractor listening on :' + port));
+app.listen(port, () => console.log('server: listening on :' + port));
 EOF
-
-RUN adduser -D -H appuser && chown -R appuser:appuser /app
-USER appuser
 
 EXPOSE 8080
 CMD ["node", "server.js"]
-
